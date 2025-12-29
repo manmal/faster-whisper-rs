@@ -26,9 +26,10 @@ jobs:
           - os: macos-15
             platform: macos-x64
             target: x86_64-apple-darwin
-          - os: windows-latest
-            platform: win-x64
-            target: x86_64-pc-windows-msvc
+# Windows requires special CRT linking - skipping for now
+#          - os: windows-latest
+#            platform: win-x64
+#            target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.platform }}

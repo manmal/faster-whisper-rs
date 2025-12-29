@@ -28,9 +28,11 @@ jobs:
           - os: macos-15
             platform: macos-x64
             name: macOS x86_64
-          - os: windows-latest
-            platform: win-x64
-            name: Windows x86_64
+# Windows requires special CRT linking configuration in ct2rs
+# Skipping for now - see: https://github.com/jkawamoto/ctranslate2-rs/issues/X
+#          - os: windows-latest
+#            platform: win-x64
+#            name: Windows x86_64
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
@@ -89,7 +91,7 @@ jobs:
           cd models/tiny
           
           # Use -L to follow redirects and -f to fail on HTTP errors
-          for file in model.bin config.json tokenizer.json vocabulary.json; do
+          for file in model.bin config.json tokenizer.json vocabulary.txt; do
             echo "Downloading $file..."
             curl -fLO "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/$file" || {
               echo "Failed to download $file"
