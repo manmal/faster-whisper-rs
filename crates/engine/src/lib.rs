@@ -575,13 +575,6 @@ impl Engine {
         let n_processors = opts.n_processors.unwrap_or(1);
         let use_parallel = n_processors > 1;
         
-        // Note: word timestamps not supported with parallel processing
-        if use_parallel && want_word_timestamps {
-            return Err(napi::Error::from_reason(
-                "Word timestamps are not supported with parallel processing (n_processors > 1)".to_string()
-            ));
-        }
-        
         // Run transcription (parallel or sequential)
         if use_parallel {
             self.ctx.full_parallel(params, &processed_samples, n_processors as i32)
@@ -641,24 +634,33 @@ impl Engine {
                 (filtered_segment_start, filtered_segment_end)
             };
             
-            // Parse word-level timestamps if enabled (only in sequential mode)
-            let words = if want_word_timestamps && segment_for_words.is_some() {
-                let segment = segment_for_words.as_ref().unwrap();
-                let num_tokens = segment.n_tokens();
+            // Parse word-level timestamps if enabled
+            let words = if want_word_timestamps {
+                let num_tokens = if use_parallel {
+                    self.ctx.full_n_tokens(i)
+                } else {
+                    segment_for_words.as_ref().map(|s| s.n_tokens()).unwrap_or(0)
+                };
                 
                 let mut words_vec = Vec::new();
                 for j in 0..num_tokens {
-                    let token = match segment.get_token(j) {
-                        Some(t) => t,
-                        None => continue,
+                    // Get token text and data from context (parallel) or state segment (sequential)
+                    let (token_text, token_data, token_prob) = if use_parallel {
+                        let text = self.ctx.full_get_token_text_lossy(i, j).unwrap_or_default();
+                        let data = self.ctx.full_get_token_data(i, j);
+                        let prob = self.ctx.full_get_token_prob(i, j);
+                        (text, data, prob)
+                    } else {
+                        let segment = segment_for_words.as_ref().unwrap();
+                        let token = match segment.get_token(j) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        let text = token.to_str_lossy().map(|t| t.into_owned()).unwrap_or_default();
+                        let data = token.token_data();
+                        let prob = token.token_probability();
+                        (text, data, prob)
                     };
-                    
-                    let token_text = match token.to_str_lossy() {
-                        Ok(t) => t.into_owned(),
-                        Err(_) => continue,
-                    };
-                    
-                    let token_data = token.token_data();
                     
                     // Skip special tokens
                     if token_text.starts_with('[') || token_text.starts_with('<') {
@@ -681,7 +683,7 @@ impl Engine {
                         word: token_text.trim().to_string(),
                         start: adj_start,
                         end: adj_end,
-                        probability: token.token_probability() as f64,
+                        probability: token_prob as f64,
                     });
                 }
                 Some(words_vec)
