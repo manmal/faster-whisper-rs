@@ -126,12 +126,15 @@ jobs:
           ls -la
 
       - name: Run smoke test
+        shell: bash
         run: npm test
 
       - name: Run unit tests
+        shell: bash
         run: npm run test:unit
 
       - name: Run E2E tests
+        shell: bash
         run: npm run test:e2e
 
       - name: Upload build artifacts

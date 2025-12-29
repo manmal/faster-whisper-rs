@@ -229,6 +229,8 @@ console.log(result);
 
 ### 3. Audio Format Requirements
 
+> **Note:** Unlike the Python `faster-whisper` which handles various audio formats transparently, this package requires pre-converted audio. You'll typically need `ffmpeg` installed for audio preprocessing.
+
 Audio must be WAV format with these specifications:
 
 | Property | Required Value |
@@ -242,6 +244,8 @@ Audio must be WAV format with these specifications:
 ```bash
 ffmpeg -i input.mp3 -ar 16000 -ac 1 -acodec pcm_s16le output.wav
 ```
+
+The WAV parser is intentionally minimal and does not validate format headers—providing incorrectly formatted audio will produce garbage output or errors.
 
 ---
 
