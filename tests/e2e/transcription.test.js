@@ -56,8 +56,10 @@ describe('E2E Transcription', { skip: !hasModel && 'Model not available' }, () =
       engine.transcribe(audioPath);
       const elapsed = Date.now() - start;
       
-      // Should complete within 10 seconds for tiny model
-      assert.ok(elapsed < 10000, `Transcription took too long: ${elapsed}ms`);
+      // Should complete within reasonable time for tiny model
+      // Windows CI is slower, allow up to 30 seconds
+      const maxTime = process.platform === 'win32' ? 30000 : 10000;
+      assert.ok(elapsed < maxTime, `Transcription took too long: ${elapsed}ms`);
     });
 
     it('should handle rapid sequential transcriptions', () => {
