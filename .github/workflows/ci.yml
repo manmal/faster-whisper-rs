@@ -28,11 +28,9 @@ jobs:
           - os: macos-15
             platform: macos-x64
             name: macOS x86_64
-# Windows requires special CRT linking configuration in ct2rs
-# Skipping for now - see: https://github.com/jkawamoto/ctranslate2-rs/issues/X
-#          - os: windows-latest
-#            platform: win-x64
-#            name: Windows x86_64
+          - os: windows-latest
+            platform: win-x64
+            name: Windows x86_64
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.name }}
@@ -74,7 +72,8 @@ jobs:
       - name: Install dependencies
         run: npm ci || npm install
 
-      - name: Build
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           # macOS needs OpenMP flags
@@ -83,6 +82,13 @@ jobs:
             export LDFLAGS="-L$(brew --prefix libomp)/lib"
           fi
           npm run build
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: npm run build
+        env:
+          RUSTFLAGS: "-C target-feature=+crt-static"
 
       - name: Download test model
         shell: bash
