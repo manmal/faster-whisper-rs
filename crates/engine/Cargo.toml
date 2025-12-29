@@ -1,0 +1,17 @@
+[package]
+name = "whisper-live-engine"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2.12", features = ["async"] }
+napi-derive = "2.12"
+# We use ct2rs to generate safe bindings to the C++ lib
+ct2rs = { version = "0.9.14", features = ["whisper"] } 
+anyhow = "1.0"
+
+[build-dependencies]
+napi-build = "2"

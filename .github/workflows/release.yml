@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux-x64
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+          - os: macos-13
+            platform: macos-x64
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            platform: win-x64
+            target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download prebuilt CTranslate2
+        shell: bash
+        run: ./scripts/download-prebuilt.sh ${{ matrix.platform }}
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Copy libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd crates/engine
+          cp ../../lib_build/lib/libctranslate2.so* ./
+          cp ../../lib_build/lib/libgomp.so.1 ./ 2>/dev/null || true
+
+      - name: Copy libs (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp lib_build/lib/*.dll crates/engine/
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd crates/engine
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            7z a ../../dist/binaries-${{ matrix.platform }}.zip *.node *.dll
+          else
+            tar -czvf ../../dist/binaries-${{ matrix.platform }}.tar.gz *.node *.dylib *.so* 2>/dev/null || \
+            tar -czvf ../../dist/binaries-${{ matrix.platform }}.tar.gz *.node *.dylib 2>/dev/null || \
+            tar -czvf ../../dist/binaries-${{ matrix.platform }}.tar.gz *.node *.so* 2>/dev/null
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.platform }}
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display artifacts
+        run: ls -R artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+          generate_release_notes: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Note: npm publish requires NPM_TOKEN secret
+      # - name: Publish to npm
+      #   run: npm publish
+      #   env:
+      #     NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

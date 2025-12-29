@@ -1,0 +1,32 @@
+# Source/build files not needed in npm package
+CTranslate2/
+lib_build/
+crates/engine/target/
+crates/engine/src/
+crates/engine/Cargo.toml
+crates/engine/Cargo.lock
+crates/engine/build.rs
+
+# Tests (fixtures are small, keep them for consumers)
+tests/unit/
+tests/e2e/
+
+# CI/Development
+.github/
+.gitignore
+*.aiff
+*.log
+
+# Large audio files (keep fixtures)
+*.aiff
+french_test.*
+german_test.*
+italian_test.*
+japanese_test.*
+spanish_test.*
+speech_test.*
+test.wav
+
+# Docs that aren't needed
+CROSS_PLATFORM_TEST_RESULTS.md
+test-platforms/

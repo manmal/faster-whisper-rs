@@ -1,0 +1,73 @@
+{
+  "name": "faster-whisper-node",
+  "version": "0.1.0",
+  "description": "Fast Whisper speech-to-text for Node.js using CTranslate2. No Python required.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manmal/faster-whisper-node.git"
+  },
+  "homepage": "https://github.com/manmal/faster-whisper-node#readme",
+  "bugs": {
+    "url": "https://github.com/manmal/faster-whisper-node/issues"
+  },
+  "author": "Manuel Maly",
+  "license": "MIT",
+  "keywords": [
+    "whisper",
+    "speech-to-text",
+    "transcription",
+    "audio",
+    "voice",
+    "asr",
+    "ctranslate2",
+    "faster-whisper",
+    "native",
+    "rust",
+    "napi"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "preinstall": "./scripts/download-prebuilt.sh || true",
+    "build:rust": "cd crates/engine && napi build --platform --release",
+    "build": "npm run build:rust",
+    "postbuild": "node scripts/post-build.js",
+    "test": "node test.js",
+    "test:unit": "node --test tests/unit/*.test.js",
+    "test:e2e": "node --test tests/e2e/*.test.js",
+    "test:all": "npm run test:unit && npm run test:e2e",
+    "lint": "echo 'No linter configured yet'",
+    "prepublishOnly": "npm run build && npm run test:all"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "crates/engine/*.node",
+    "crates/engine/*.dylib",
+    "crates/engine/*.so*",
+    "crates/engine/*.dll",
+    "scripts/",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_LICENSES.md"
+  ],
+  "napi": {
+    "name": "whisper-live-engine",
+    "triples": {
+      "defaults": true,
+      "additional": [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.0"
+  }
+}

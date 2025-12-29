@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+lib_build/
+crates/engine/target/
+crates/engine/*.node
+crates/engine/*.dylib
+crates/engine/*.so*
+crates/engine/*.dll
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Test outputs
+coverage/
+
+# Models (too large for git)
+models/*/model.bin
+models/*/pytorch_model.bin
+models/*/*.safetensors
+
+# Keep model configs
+!models/*/config.json
+!models/*/tokenizer.json
+!models/*/vocabulary.json
+!models/*/preprocessor_config.json
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# OS files
+Thumbs.db
