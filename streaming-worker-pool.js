@@ -14,8 +14,8 @@ const os = require('os');
 if (!isMainThread) {
   const { StreamingEngine } = require(workerData.enginePath);
   
-  // Create streaming engine in worker
-  const engine = new StreamingEngine(workerData.modelPath);
+  // Create streaming engine in worker with model options
+  const engine = StreamingEngine.withOptions(workerData.modelPath, workerData.modelOptions || {});
   
   // Session mapping (local session ID -> engine session ID)
   const sessions = new Map();
@@ -129,6 +129,12 @@ class StreamingWorkerPool extends EventEmitter {
     this.modelPath = modelPath;
     this.options = {
       numWorkers: options.numWorkers || Math.min(os.cpus().length, 8),
+      // Model options passed to each StreamingEngine
+      modelOptions: {
+        computeType: options.computeType || 'int8',
+        cpuThreads: options.cpuThreads || 1,
+        ...options.modelOptions,
+      },
       ...options,
     };
     
@@ -159,7 +165,11 @@ class StreamingWorkerPool extends EventEmitter {
     for (let i = 0; i < this.options.numWorkers; i++) {
       const workerPromise = new Promise((resolve, reject) => {
         const worker = new Worker(__filename, {
-          workerData: { enginePath, modelPath: modelPathAbs },
+          workerData: { 
+            enginePath, 
+            modelPath: modelPathAbs,
+            modelOptions: this.options.modelOptions,
+          },
         });
         
         const onMessage = (msg) => {
