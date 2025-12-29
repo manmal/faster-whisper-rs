@@ -41,6 +41,10 @@ const {
   isGpuAvailable,
   getGpuCount,
   getBestDevice,
+  // Silero VAD
+  isSileroVadAvailable,
+  getSileroModelPath,
+  downloadSileroModel,
 } = nativeModule;
 
 module.exports = { 
@@ -62,6 +66,10 @@ module.exports = {
   isGpuAvailable,
   getGpuCount,
   getBestDevice,
+  // Silero VAD
+  isSileroVadAvailable,
+  getSileroModelPath,
+  downloadSileroModel,
 };
 
 // Add streaming utilities after export (avoid circular dependency)

@@ -7,6 +7,9 @@ mod download;
 mod streaming;
 mod vad;
 mod word_timestamps;
+// TODO: Enable when ort 2.0 API is stable
+// #[cfg(feature = "silero-vad")]
+// mod silero_vad;
 
 use napi_derive::napi;
 use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
@@ -105,6 +108,11 @@ pub struct VadOptions {
     pub window_size_ms: Option<u32>,
     /// Padding around speech segments in milliseconds (default: 400)
     pub speech_pad_ms: Option<u32>,
+    /// Use Silero VAD (neural network) instead of energy-based detection.
+    /// Requires the silero-vad feature and model file. More accurate but slower.
+    pub use_silero: Option<bool>,
+    /// Path to Silero VAD ONNX model file (optional, will use default cache location)
+    pub silero_model_path: Option<String>,
 }
 
 impl Default for VadOptions {
@@ -116,6 +124,8 @@ impl Default for VadOptions {
             min_silence_duration_ms: None,
             window_size_ms: None,
             speech_pad_ms: None,
+            use_silero: None,
+            silero_model_path: None,
         }
     }
 }
@@ -867,6 +877,59 @@ pub fn get_best_device() -> String {
     } else {
         "cpu".to_string()
     }
+}
+
+/// Check if Silero VAD (neural network voice activity detection) is available
+/// Returns true if the silero-vad feature is enabled
+#[napi]
+pub fn is_silero_vad_available() -> bool {
+    cfg!(feature = "silero-vad")
+}
+
+/// Get the path where the Silero VAD model would be stored
+#[napi]
+pub fn get_silero_model_path() -> String {
+    download::default_cache_dir()
+        .join("silero_vad.onnx")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Download the Silero VAD model (async)
+/// Returns the path to the downloaded model
+#[napi]
+pub async fn download_silero_model() -> napi::Result<String> {
+    let cache_dir = download::default_cache_dir();
+    let model_path = cache_dir.join("silero_vad.onnx");
+    
+    if model_path.exists() {
+        return Ok(model_path.to_string_lossy().into_owned());
+    }
+    
+    // Download from Silero VAD GitHub releases
+    let url = "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx";
+    
+    // Ensure cache directory exists
+    tokio::fs::create_dir_all(&cache_dir).await
+        .map_err(|e| napi::Error::from_reason(format!("Failed to create cache dir: {}", e)))?;
+    
+    // Download the model
+    let response = reqwest::get(url).await
+        .map_err(|e| napi::Error::from_reason(format!("Failed to download Silero VAD model: {}", e)))?;
+    
+    if !response.status().is_success() {
+        return Err(napi::Error::from_reason(format!(
+            "Failed to download Silero VAD model: HTTP {}", response.status()
+        )));
+    }
+    
+    let bytes = response.bytes().await
+        .map_err(|e| napi::Error::from_reason(format!("Failed to read response: {}", e)))?;
+    
+    tokio::fs::write(&model_path, &bytes).await
+        .map_err(|e| napi::Error::from_reason(format!("Failed to write model file: {}", e)))?;
+    
+    Ok(model_path.to_string_lossy().into_owned())
 }
 
 // ============== Streaming Transcription ==============

@@ -53,6 +53,13 @@ export interface VadOptions {
   windowSizeMs?: number
   /** Padding around speech segments in milliseconds (default: 400) */
   speechPadMs?: number
+  /**
+   * Use Silero VAD (neural network) instead of energy-based detection.
+   * Requires the silero-vad feature and model file. More accurate but slower.
+   */
+  useSilero?: boolean
+  /** Path to Silero VAD ONNX model file (optional, will use default cache location) */
+  sileroModelPath?: string
 }
 /** Transcription options */
 export interface TranscribeOptions {
@@ -178,6 +185,18 @@ export declare function isGpuAvailable(): boolean
 export declare function getGpuCount(): number
 /** Get the best available device ("metal", "cuda", or "cpu") */
 export declare function getBestDevice(): string
+/**
+ * Check if Silero VAD (neural network voice activity detection) is available
+ * Returns true if the silero-vad feature is enabled
+ */
+export declare function isSileroVadAvailable(): boolean
+/** Get the path where the Silero VAD model would be stored */
+export declare function getSileroModelPath(): string
+/**
+ * Download the Silero VAD model (async)
+ * Returns the path to the downloaded model
+ */
+export declare function downloadSileroModel(): Promise<string>
 /** A streaming transcription segment (stable or preview) */
 export interface StreamingSegment {
   /** Segment text */
