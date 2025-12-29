@@ -310,6 +310,8 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { Engine } = nativeBinding
+const { Engine, availableModels, formatTimestamp } = nativeBinding
 
 module.exports.Engine = Engine
+module.exports.availableModels = availableModels
+module.exports.formatTimestamp = formatTimestamp

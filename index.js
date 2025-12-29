@@ -21,6 +21,16 @@ if (platform === 'darwin' && arch === 'arm64') {
 }
 
 // Load the native module from crates/engine
-const { Engine } = require(`./crates/engine/${binaryName}`);
+const nativeModule = require(`./crates/engine/${binaryName}`);
 
-module.exports = { Engine };
+// Export Engine class
+const { Engine } = nativeModule;
+
+// Export utility functions
+const { availableModels, formatTimestamp } = nativeModule;
+
+module.exports = { 
+  Engine,
+  availableModels,
+  formatTimestamp
+};

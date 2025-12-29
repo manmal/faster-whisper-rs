@@ -9,6 +9,43 @@ Uses [CTranslate2](https://github.com/OpenNMT/CTranslate2) as the inference engi
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/faster-whisper-node.svg)](https://nodejs.org)
 
+## Features
+
+- **Structured output** — Get segments with timestamps, confidence scores, and metadata
+- **Transcription options** — Beam size, temperature, language, and more
+- **Multiple input formats** — File paths, Buffers, or raw samples
+- **Stereo support** — Automatically converts stereo to mono
+- **No Python** — Pure Node.js/Rust, zero Python dependencies
+
+## Quick Start
+
+```javascript
+const { Engine, formatTimestamp } = require('faster-whisper-node');
+
+// Load model
+const engine = new Engine('./models/tiny');
+
+// Simple transcription (returns text)
+const text = engine.transcribe('./audio.wav');
+console.log(text); // "Hello world."
+
+// Get segments with timestamps
+const result = engine.transcribeSegments('./audio.wav');
+for (const segment of result.segments) {
+  console.log(`[${formatTimestamp(segment.start)} -> ${formatTimestamp(segment.end)}] ${segment.text}`);
+}
+// [00:00.000 -> 00:02.500] Hello world.
+
+// With options
+const text2 = engine.transcribeWithOptions('./audio.wav', {
+  language: 'en',
+  beamSize: 5,
+  temperature: 0.0
+});
+```
+
+---
+
 ## Why This Exists
 
 [faster-whisper](https://github.com/SYSTRAN/faster-whisper) is an excellent Python library that provides fast Whisper inference via CTranslate2. However, integrating Python into Node.js/Electron applications introduces significant complexity:
@@ -23,214 +60,196 @@ Uses [CTranslate2](https://github.com/OpenNMT/CTranslate2) as the inference engi
 
 **This package provides the same CTranslate2 performance with zero Python dependencies.**
 
-## Relationship to faster-whisper
-
-```mermaid
-graph TB
-    subgraph Models["Whisper Models"]
-        M[("Converted to CTranslate2 format by SYSTRAN")]
-    end
-    
-    subgraph Engine["CTranslate2 (C++)"]
-        E["High-performance inference engine by OpenNMT"]
-    end
-    
-    subgraph Bindings["Language Bindings"]
-        FW["<b>faster-whisper</b><br/>Python<br/>• pip install<br/>• Rich Python API"]
-        FWN["<b>faster-whisper-node</b><br/>Node.js/Rust<br/>• npm install<br/>• No Python required"]
-    end
-    
-    M --> Engine
-    Engine --> FW
-    Engine --> FWN
-```
-
-### When to Use Which
-
-| Use Case | Recommended |
-|----------|-------------|
-| Python application | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
-| Node.js/Electron app | **faster-whisper-node** |
-| Python scripts & notebooks | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
-| Need rich Python ecosystem | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
-| Shipping desktop app without Python | **faster-whisper-node** |
-| Serverless/container with Node.js | **faster-whisper-node** |
-
-### Credits
-
-This project stands on the shoulders of giants:
-
-- **[SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — The original fast Whisper implementation and model conversions
-- **[OpenNMT/CTranslate2](https://github.com/OpenNMT/CTranslate2)** — The incredible inference engine that makes this fast
-- **[ct2rs](https://github.com/jkawamoto/ctranslate2-rs)** — Rust bindings for CTranslate2
-
----
-
-## Architecture
-
-```mermaid
-graph TB
-    subgraph Node["Node.js Application"]
-        JS["JavaScript API"]
-    end
-    
-    subgraph Native["Native Module"]
-        NAPI["whisper-live-engine.*.node<br/>(Rust via N-API)"]
-    end
-    
-    subgraph Engine["Inference Engine"]
-        CT2["libctranslate2.so/.dll/.dylib<br/>(C++)"]
-    end
-    
-    JS --> NAPI
-    NAPI --> CT2
-```
-
-- **Node.js layer**: JavaScript API
-- **Rust layer**: N-API bindings via [napi-rs](https://napi.rs/), audio processing, Whisper interface via [ct2rs](https://crates.io/crates/ct2rs)
-- **C++ layer**: CTranslate2 inference engine
-
----
-
-## Platform Support
-
-| Platform | Architecture | Status | Binary Source |
-|----------|--------------|--------|---------------|
-| Linux | x86_64 | [![Linux x64](https://img.shields.io/github/actions/workflow/status/manmal/faster-whisper-node/ci.yml?label=build&logo=linux)](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml) | [PyPI wheel][pypi-files] |
-| Linux | arm64 | [![Linux arm64](https://img.shields.io/github/actions/workflow/status/manmal/faster-whisper-node/ci.yml?label=build&logo=linux)](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml) | [PyPI wheel][pypi-files] |
-| macOS | arm64 (Apple Silicon) | [![macOS arm64](https://img.shields.io/github/actions/workflow/status/manmal/faster-whisper-node/ci.yml?label=build&logo=apple)](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml) | [PyPI wheel][pypi-files] |
-| macOS | x86_64 (Intel) | [![macOS x64](https://img.shields.io/github/actions/workflow/status/manmal/faster-whisper-node/ci.yml?label=build&logo=apple)](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml) | [PyPI wheel][pypi-files] |
-| Windows | x86_64 | [![Windows x64](https://img.shields.io/github/actions/workflow/status/manmal/faster-whisper-node/ci.yml?label=build&logo=windows)](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml) | [PyPI wheel][pypi-files] |
-
-[pypi-files]: https://pypi.org/project/ctranslate2/#files
-[ct2-repo]: https://github.com/OpenNMT/CTranslate2
-
-### Binary Sources
-
-
-- **All platforms**: Prebuilt binaries extracted from [PyPI wheels](https://pypi.org/project/ctranslate2/#files) using `curl` + `unzip` (no Python required)
-
-See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for license information.
-
 ---
 
 ## Installation
 
-### For End Users (npm package)
-
 ```bash
-# npm
 npm install faster-whisper-node
-
-# pnpm
-pnpm add faster-whisper-node
-
-# yarn
-yarn add faster-whisper-node
 ```
 
-#### Platform-Specific Requirements
+### Platform Requirements
 
 | Platform | Additional Requirements |
 |----------|------------------------|
-| **Linux** | None (prebuilt binaries included) |
-| **Windows** | [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) (usually already installed) |
-| **macOS** | None (prebuilt binaries included) |
+| **Linux** | None |
+| **Windows** | [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) |
+| **macOS** | None |
 
-### For Development (building from source)
+---
 
-#### Prerequisites
+## API Reference
 
-| Platform | Requirements |
-|----------|--------------|
-| **All** | [Node.js](https://nodejs.org/) v18+, [Rust](https://rustup.rs/) |
-| **macOS** | Xcode Command Line Tools (`xcode-select --install`) |
-| **Linux** | `apt install build-essential unzip` (or equivalent) |
-| **Windows** | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) |
+### Engine
 
-#### Build Steps
+```typescript
+import { Engine, TranscribeOptions, ModelOptions, TranscriptionResult, Segment } from 'faster-whisper-node';
+```
 
-```bash
-# Clone with submodules
-git clone --recursive https://github.com/manmal/faster-whisper-node
-cd faster-whisper-node
+#### Constructor
 
-# Download prebuilt CTranslate2 (auto-detects platform)
-./scripts/download-prebuilt.sh
+```typescript
+// Simple
+const engine = new Engine(modelPath: string);
 
-# Build the Node.js module
-npm install
-npm run build
+// With options
+const engine = Engine.withOptions(modelPath: string, options?: ModelOptions);
+```
+
+**ModelOptions:**
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `device` | `"cpu" \| "cuda"` | `"cpu"` | Computation device |
+| `computeType` | `string` | `"default"` | `"default"`, `"auto"`, `"int8"`, `"int8_float16"`, `"float16"`, `"float32"` |
+| `cpuThreads` | `number` | `0` | Number of CPU threads (0 = auto) |
+
+#### Methods
+
+##### `transcribe(audioPath: string): string`
+
+Simple transcription, returns text only.
+
+```typescript
+const text = engine.transcribe('./audio.wav');
+// "Hello world."
+```
+
+##### `transcribeSegments(audioPath: string, options?: TranscribeOptions): TranscriptionResult`
+
+Full transcription with segments and metadata.
+
+```typescript
+const result = engine.transcribeSegments('./audio.wav', { language: 'en' });
+console.log(result.text);      // "Hello world."
+console.log(result.duration);  // 2.5
+console.log(result.segments);  // [{ id: 0, start: 0, end: 2.5, text: "Hello world.", ... }]
+```
+
+##### `transcribeWithOptions(audioPath: string, options: TranscribeOptions): string`
+
+Transcription with options, returns text only.
+
+##### `transcribeBuffer(buffer: Buffer, options?: TranscribeOptions): TranscriptionResult`
+
+Transcribe from a Buffer containing WAV data.
+
+```typescript
+const buffer = fs.readFileSync('./audio.wav');
+const result = engine.transcribeBuffer(buffer);
+```
+
+##### `transcribeSamples(samples: number[], options?: TranscribeOptions): TranscriptionResult`
+
+Transcribe from raw audio samples (must be 16kHz mono, normalized to [-1, 1]).
+
+```typescript
+const samples = [0.0, 0.1, -0.05, ...]; // Float32 samples
+const result = engine.transcribeSamples(samples);
+```
+
+##### `samplingRate(): number`
+
+Returns expected sampling rate (16000 Hz).
+
+##### `isMultilingual(): boolean`
+
+Returns true if model supports multiple languages.
+
+##### `numLanguages(): number`
+
+Returns number of supported languages.
+
+#### TranscribeOptions
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `language` | `string` | auto-detect | Source language code (e.g., "en", "de", "fr") |
+| `task` | `"transcribe" \| "translate"` | `"transcribe"` | Task to perform |
+| `beamSize` | `number` | `5` | Beam size (1 = greedy search) |
+| `patience` | `number` | `1.0` | Beam search patience |
+| `lengthPenalty` | `number` | `1.0` | Length penalty |
+| `repetitionPenalty` | `number` | `1.0` | Repetition penalty (>1 to penalize) |
+| `noRepeatNgramSize` | `number` | `0` | Prevent ngram repetitions |
+| `temperature` | `number` | `1.0` | Sampling temperature |
+| `suppressBlank` | `boolean` | `true` | Suppress blank outputs |
+| `maxLength` | `number` | `448` | Maximum generation length |
+| `wordTimestamps` | `boolean` | `false` | Include word-level timestamps |
+
+#### TranscriptionResult
+
+```typescript
+interface TranscriptionResult {
+  segments: Segment[];
+  language: string;
+  languageProbability: number;
+  duration: number;
+  text: string;
+}
+```
+
+#### Segment
+
+```typescript
+interface Segment {
+  id: number;
+  seek: number;
+  start: number;  // seconds
+  end: number;    // seconds
+  text: string;
+  tokens: number[];
+  temperature: number;
+  avgLogprob: number;
+  compressionRatio: number;
+  noSpeechProb: number;
+}
+```
+
+### Utility Functions
+
+#### `availableModels(): string[]`
+
+Returns list of supported model size aliases.
+
+```typescript
+const models = availableModels();
+// ["tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "large-v1", "large-v2", "large-v3"]
+```
+
+#### `formatTimestamp(seconds: number, alwaysIncludeHours?: boolean): string`
+
+Format seconds to timestamp string.
+
+```typescript
+formatTimestamp(65.5);       // "01:05.500"
+formatTimestamp(65.5, true); // "00:01:05.500"
+formatTimestamp(3661.5);     // "01:01:01.500"
 ```
 
 ---
 
-## Usage
+## Models
 
-### 1. Download a Model
-
-Models are hosted on Hugging Face by SYSTRAN (the faster-whisper team):
+Download models from Hugging Face:
 
 ```bash
-# Using git (recommended for large models)
 mkdir -p models && cd models
 git lfs install
 git clone --depth 1 https://huggingface.co/Systran/faster-whisper-tiny tiny
-
-# Or download directly
-mkdir -p models/tiny && cd models/tiny
-curl -LO https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/model.bin
-curl -LO https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/config.json
-curl -LO https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/tokenizer.json
-curl -LO https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/vocabulary.json
 ```
 
-**Available models:** `tiny`, `base`, `small`, `medium`, `large-v2`, `large-v3`
+**Available models:** `tiny`, `tiny.en`, `base`, `base.en`, `small`, `small.en`, `medium`, `medium.en`, `large-v1`, `large-v2`, `large-v3`
 
-Create the required `preprocessor_config.json`:
+---
 
-```bash
-cat > models/tiny/preprocessor_config.json << 'EOF'
-{
-  "chunk_length": 30,
-  "feature_extractor_type": "WhisperFeatureExtractor",
-  "feature_size": 80,
-  "hop_length": 160,
-  "n_fft": 400,
-  "n_samples": 480000,
-  "nb_max_frames": 3000,
-  "padding_side": "right",
-  "padding_value": 0.0,
-  "processor_class": "WhisperProcessor",
-  "return_attention_mask": false,
-  "sampling_rate": 16000
-}
-EOF
-```
+## Audio Format
 
-### 2. Transcribe Audio
+Audio must be WAV format:
 
-```javascript
-const { Engine } = require('faster-whisper-node');
-
-// Load model (do this once, reuse for multiple transcriptions)
-const engine = new Engine('./models/tiny');
-
-// Transcribe a WAV file
-const result = engine.transcribe('./audio.wav');
-console.log(result);
-// Output: " Hello, world!"
-```
-
-### 3. Audio Format Requirements
-
-Audio must be WAV format with these specifications:
-
-| Property | Required Value |
-|----------|----------------|
+| Property | Required |
+|----------|----------|
 | Sample rate | 16000 Hz |
-| Channels | Mono (1) |
-| Bit depth | 16-bit PCM |
+| Channels | Mono or Stereo (auto-converted) |
+| Bit depth | 8, 16, 24, or 32-bit PCM |
 
 **Convert with ffmpeg:**
 
@@ -240,111 +259,43 @@ ffmpeg -i input.mp3 -ar 16000 -ac 1 -acodec pcm_s16le output.wav
 
 ---
 
-## API Reference
+## Platform Support
 
-### `Engine`
-
-```javascript
-const { Engine } = require('faster-whisper-node');
-```
-
-#### `new Engine(modelPath)`
-
-Creates a new transcription engine.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `modelPath` | `string` | Path to the model directory |
-
-#### `engine.transcribe(audioPath)`
-
-Transcribes an audio file.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `audioPath` | `string` | Path to WAV file (16kHz, mono, 16-bit PCM) |
-
-**Returns:** `string` — The transcribed text
+| Platform | Architecture | Status |
+|----------|--------------|--------|
+| Linux | x86_64, arm64 | ✅ |
+| macOS | arm64 (Apple Silicon), x86_64 | ✅ |
+| Windows | x86_64 | ✅ |
 
 ---
 
-## Testing
+## Development
 
 ```bash
-# Create test audio (macOS)
-say -o test.aiff "Hello world"
-ffmpeg -i test.aiff -ar 16000 -ac 1 -acodec pcm_s16le test.wav -y
+# Clone
+git clone --recursive https://github.com/manmal/faster-whisper-node
+cd faster-whisper-node
 
-# Create test audio (Linux with espeak)
-espeak "Hello world" --stdout | ffmpeg -i - -ar 16000 -ac 1 -acodec pcm_s16le test.wav -y
+# Install dependencies (downloads prebuilt CTranslate2)
+npm install
 
-# Run tests
+# Build
+npm run build
+
+# Test
 npm test
 ```
 
 ---
 
-## Project Structure
+## Credits
 
-```
-faster-whisper-node/
-├── scripts/
-│   ├── build-mac.sh          # Build CTranslate2 from source (macOS)
-│   ├── build-linux.sh        # Build CTranslate2 from source (Linux)
-│   ├── download-prebuilt.sh  # Download prebuilt binaries (Linux/Windows)
-│   └── post-build.js         # Copy libs after Rust build
-├── crates/
-│   └── engine/
-│       ├── Cargo.toml        # Rust dependencies
-│       ├── build.rs          # Cross-platform linker config
-│       └── src/lib.rs        # Rust implementation
-├── lib_build/                # CTranslate2 build output
-│   └── lib/
-├── models/                   # Whisper models
-├── index.js                  # Node.js entry point
-└── package.json
-```
-
----
-
-## Troubleshooting
-
-### "Image not found" / "cannot open shared object file"
-
-The shared library isn't being found. Solutions:
-
-**Option 1:** Run post-build to copy libraries
-```bash
-npm run postbuild
-```
-
-**Option 2:** Set library path
-
-| Platform | Command |
-|----------|---------|
-| Linux | `export LD_LIBRARY_PATH=$PWD/crates/engine:$LD_LIBRARY_PATH` |
-| macOS | `export DYLD_LIBRARY_PATH=$PWD/crates/engine:$DYLD_LIBRARY_PATH` |
-| Windows | Add `crates\engine` to `PATH` |
-
-### Model loading fails
-
-Ensure your model directory contains all required files:
-
-| File | Description |
-|------|-------------|
-| `model.bin` | Model weights |
-| `config.json` | Model configuration |
-| `tokenizer.json` | Tokenizer data |
-| `preprocessor_config.json` | Audio preprocessing config |
-
-### Windows: "VCRUNTIME140.dll not found"
-
-Install the [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
+- **[SYSTRAN/faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — Original implementation and model conversions
+- **[OpenNMT/CTranslate2](https://github.com/OpenNMT/CTranslate2)** — The inference engine
+- **[ct2rs](https://github.com/jkawamoto/ctranslate2-rs)** — Rust bindings for CTranslate2
 
 ---
 
 ## License
 
-MIT
-
-See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for third-party licenses.
+MIT — See [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md) for third-party licenses.
