@@ -4,6 +4,14 @@ const path = require('path');
 const engineDir = path.join(__dirname, '..', 'crates', 'engine');
 const libDir = path.join(__dirname, '..', 'lib_build', 'lib');
 
+// Check if lib_build exists (prebuilt approach)
+// If not, we're using static linking and don't need to copy anything
+if (!fs.existsSync(libDir)) {
+  console.log('ℹ️  No lib_build directory - using static linking');
+  console.log('✅ Post-build complete');
+  process.exit(0);
+}
+
 // Platform-specific library names
 const platform = process.platform;
 let libPatterns;

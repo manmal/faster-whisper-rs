@@ -1,13 +1,15 @@
 # faster-whisper-node
 
+<p align="center">
+  <a href="https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml"><img src="https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://www.npmjs.com/package/faster-whisper-node"><img src="https://img.shields.io/npm/v/faster-whisper-node.svg" alt="npm version"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/faster-whisper-node.svg" alt="Node.js Version"></a>
+</p>
+
 A pure Node.js/Rust module for Whisper speech-to-text transcription. **No Python runtime required.**
 
 Uses [CTranslate2](https://github.com/OpenNMT/CTranslate2) as the inference engine, the same battle-tested backend that powers [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
-
-[![CI](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml/badge.svg)](https://github.com/manmal/faster-whisper-node/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/faster-whisper-node.svg)](https://www.npmjs.com/package/faster-whisper-node)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/faster-whisper-node.svg)](https://nodejs.org)
 
 ## Why This Exists
 
@@ -15,13 +17,15 @@ Uses [CTranslate2](https://github.com/OpenNMT/CTranslate2) as the inference engi
 
 | Challenge | Python Approach | This Package |
 |-----------|-----------------|--------------|
-| **Runtime dependency** | Requires Python interpreter + pip packages | Single `.node` binary + shared library |
+| **Runtime dependency** | Requires Python interpreter + pip packages | `.node` binary + CTranslate2 shared library |
 | **Distribution** | Bundle Python or require user installation | npm install (prebuilt binaries) |
 | **Electron/Node integration** | Child process or Python bridge | Native N-API module |
 | **Cold start time** | Python interpreter startup overhead | Native code, instant loading |
 | **Cross-platform packaging** | Complex (pyinstaller, conda, etc.) | Standard npm workflow |
 
-**This package provides the same CTranslate2 performance with zero Python dependencies.**
+**This package provides the same CTranslate2 inference speed with zero Python dependencies.**
+
+> **⚠️ Current Limitations:** This package currently provides **plain text transcription only**. Advanced features available in the Python version (timestamps, word-level confidence, VAD, streaming) are not yet exposed. Audio must be pre-converted to 16kHz mono WAV format (e.g., using `ffmpeg`).
 
 ## Relationship to faster-whisper
 
@@ -50,9 +54,10 @@ graph TB
 | Use Case | Recommended |
 |----------|-------------|
 | Python application | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
-| Node.js/Electron app | **faster-whisper-node** |
+| Node.js/Electron app (plain text) | **faster-whisper-node** |
 | Python scripts & notebooks | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
-| Need rich Python ecosystem | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
+| Need timestamps/subtitles (SRT/VTT) | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
+| Need word-level confidence/VAD | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) |
 | Shipping desktop app without Python | **faster-whisper-node** |
 | Serverless/container with Node.js | **faster-whisper-node** |
 
@@ -265,6 +270,12 @@ Transcribes an audio file.
 | `audioPath` | `string` | Path to WAV file (16kHz, mono, 16-bit PCM) |
 
 **Returns:** `string` — The transcribed text
+
+#### `engine.samplingRate()`
+
+Returns the expected audio sample rate for the model.
+
+**Returns:** `number` — Sample rate in Hz (typically 16000)
 
 ---
 
