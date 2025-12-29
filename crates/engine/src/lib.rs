@@ -9,11 +9,21 @@ mod word_timestamps;
 
 use napi_derive::napi;
 use ct2rs::{Whisper, WhisperOptions, Config};
-use ct2rs::sys::{Device, ComputeType};
+use ct2rs::sys::{Device, ComputeType, get_device_count};
 
 use vad::{EnergyVad, VadOptions as InternalVadOptions};
 use word_timestamps::parse_timestamped_text;
 
+
+/// Get the number of available CUDA devices
+fn cuda_device_count() -> i32 {
+    get_device_count(Device::CUDA)
+}
+
+/// Check if CUDA is available
+fn is_cuda_available() -> bool {
+    cuda_device_count() > 0
+}
 
 // Re-export download functions
 pub use download::{
@@ -282,6 +292,13 @@ impl Engine {
         
         let device = match opts.device.as_deref() {
             Some("cuda") | Some("CUDA") => Device::CUDA,
+            Some("auto") | Some("AUTO") => {
+                if is_cuda_available() {
+                    Device::CUDA
+                } else {
+                    Device::CPU
+                }
+            }
             _ => Device::CPU,
         };
         
@@ -752,5 +769,27 @@ pub fn format_timestamp(seconds: f64, always_include_hours: Option<bool>) -> Str
         format!("{:02}:{:02}:{:06.3}", hours, minutes, secs)
     } else {
         format!("{:02}:{:06.3}", minutes, secs)
+    }
+}
+
+/// Check if CUDA (GPU acceleration) is available
+#[napi]
+pub fn is_gpu_available() -> bool {
+    is_cuda_available()
+}
+
+/// Get the number of available CUDA GPU devices
+#[napi]
+pub fn get_gpu_count() -> i32 {
+    cuda_device_count()
+}
+
+/// Get the best available device ("cuda" if GPU available, otherwise "cpu")
+#[napi]
+pub fn get_best_device() -> String {
+    if is_cuda_available() {
+        "cuda".to_string()
+    } else {
+        "cpu".to_string()
     }
 }

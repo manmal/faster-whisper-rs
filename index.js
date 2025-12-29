@@ -37,6 +37,10 @@ const {
   downloadModel,
   decodeAudio,
   decodeAudioBuffer,
+  // Phase 4 additions
+  isGpuAvailable,
+  getGpuCount,
+  getBestDevice,
 } = nativeModule;
 
 module.exports = { 
@@ -52,4 +56,8 @@ module.exports = {
   // Audio decoding
   decodeAudio,
   decodeAudioBuffer,
+  // GPU detection
+  isGpuAvailable,
+  getGpuCount,
+  getBestDevice,
 };

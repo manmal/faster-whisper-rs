@@ -165,6 +165,12 @@ export declare function decodeAudio(path: string): Array<number>
 export declare function decodeAudioBuffer(buffer: Buffer): Array<number>
 /** Format seconds to timestamp string (HH:MM:SS.mmm or MM:SS.mmm) */
 export declare function formatTimestamp(seconds: number, alwaysIncludeHours?: boolean | undefined | null): string
+/** Check if CUDA (GPU acceleration) is available */
+export declare function isGpuAvailable(): boolean
+/** Get the number of available CUDA GPU devices */
+export declare function getGpuCount(): number
+/** Get the best available device ("cuda" if GPU available, otherwise "cpu") */
+export declare function getBestDevice(): string
 export declare class Engine {
   /**
    * Create a new transcription engine from a model path or size
