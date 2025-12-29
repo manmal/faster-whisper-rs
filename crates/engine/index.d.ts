@@ -94,38 +94,38 @@ export interface TranscribeOptions {
   noSpeechThreshold?: number
   /** Enable Voice Activity Detection to filter out silent portions (default: false) */
   vadFilter?: boolean
-  /** VAD configuration options */
+  /** VAD-specific options */
   vadOptions?: VadOptions
   /**
    * Hallucination silence threshold in seconds (default: None)
-   * Segments with a silent duration longer than this will be considered hallucinations
+   * If a segment's duration per word exceeds this, it's likely a hallucination
    */
   hallucinationSilenceThreshold?: number
 }
-/** Model configuration options */
+/** Options for model loading */
 export interface ModelOptions {
-  /** Device to use: "cpu" or "cuda" (default: "cpu") */
+  /** Device to use: "cpu", "cuda", "metal", or "auto" (default: "auto") */
   device?: string
-  /** Compute type: "default", "auto", "int8", "int8_float16", "int16", "float16", "float32" */
+  /** Compute type (not used in whisper-rs, kept for API compatibility) */
   computeType?: string
-  /** Number of CPU threads per replica (0 for auto) */
+  /** Number of CPU threads (0 = auto) */
   cpuThreads?: number
-  /** Custom cache directory for auto-downloaded models */
-  cacheDir?: string
+  /** GPU device index (for multi-GPU systems) */
+  deviceIndex?: number
 }
-/** Transcription result containing all segments and metadata */
+/** Transcription result with full segment data */
 export interface TranscriptionResult {
-  /** All transcribed segments */
+  /** All transcription segments */
   segments: Array<Segment>
   /** Detected or specified language */
   language: string
-  /** Language detection probability (0 if language was specified) */
+  /** Language detection probability */
   languageProbability: number
   /** Total audio duration in seconds */
   duration: number
-  /** Audio duration after VAD filtering (equals duration if VAD not used) */
+  /** Duration after VAD filtering (if enabled) */
   durationAfterVad: number
-  /** Full transcribed text (all segments joined) */
+  /** Full transcription text */
   text: string
 }
 /** Language detection result */
@@ -135,14 +135,14 @@ export interface LanguageDetectionResult {
   /** Detection probability */
   probability: number
 }
-/** Download progress information */
-export interface DownloadProgress {
-  /** Current progress percentage (0-100) */
-  percent: number
-  /** Current file being downloaded */
-  currentFile: string
-  /** Total files to download */
-  totalFiles: number
+/** Batch transcription result for a single file */
+export interface BatchTranscriptionItem {
+  /** Original file path */
+  filePath: string
+  /** Transcription result (None if error) */
+  result?: TranscriptionResult
+  /** Error message (None if success) */
+  error?: string
   /** Current file index */
   currentIndex: number
 }
@@ -165,18 +165,55 @@ export declare function decodeAudio(path: string): Array<number>
 export declare function decodeAudioBuffer(buffer: Buffer): Array<number>
 /** Format seconds to timestamp string (HH:MM:SS.mmm or MM:SS.mmm) */
 export declare function formatTimestamp(seconds: number, alwaysIncludeHours?: boolean | undefined | null): string
-/** Check if CUDA (GPU acceleration) is available */
+/** Check if GPU acceleration is available (Metal on macOS, CUDA on Linux/Windows) */
 export declare function isGpuAvailable(): boolean
-/** Get the number of available CUDA GPU devices */
+/** Get the number of available GPU devices */
 export declare function getGpuCount(): number
-/** Get the best available device ("cuda" if GPU available, otherwise "cpu") */
+/** Get the best available device ("metal", "cuda", or "cpu") */
 export declare function getBestDevice(): string
+/** A streaming transcription segment (stable or preview) */
+export interface StreamingSegment {
+  /** Segment text */
+  text: string
+  /** Start time in the audio stream (seconds) */
+  start: number
+  /** End time in the audio stream (seconds)  */
+  end: number
+  /** Whether this segment is final (won't change) or preview (may change) */
+  isFinal: boolean
+}
+/** Result from processing streaming audio */
+export interface StreamingResult {
+  /** Stable (final) segments that won't change */
+  stableSegments: Array<StreamingSegment>
+  /** Preview text that may change with more audio */
+  previewText?: string
+  /** Current buffer duration in seconds */
+  bufferDuration: number
+  /** Total audio processed so far in seconds */
+  totalDuration: number
+}
+/** Configuration for streaming transcription */
+export interface StreamingOptions {
+  /** Minimum buffer before transcription (seconds, default: 1.0) */
+  minBufferSeconds?: number
+  /** Stability margin from buffer end (seconds, default: 1.5) */
+  stabilityMarginSeconds?: number
+  /** Context overlap to keep after committing (seconds, default: 0.5) */
+  contextOverlapSeconds?: number
+  /** Maximum buffer size (seconds, default: 30.0) */
+  maxBufferSeconds?: number
+  /** Language for transcription */
+  language?: string
+  /** Beam size (default: 5) */
+  beamSize?: number
+}
 export declare class Engine {
   /**
    * Create a new transcription engine from a model path or size
    *
    * # Arguments
-   * * `model_path` - Either a path to a CTranslate2 model directory, or a model size
+   * * `model_path` - Either a path to a GGML model file, or a model size
    *                  alias ("tiny", "base", "small", "medium", "large-v2", "large-v3")
    */
   constructor(modelPath: string)
@@ -208,4 +245,39 @@ export declare class Engine {
   isMultilingual(): boolean
   /** Get the number of supported languages */
   numLanguages(): number
+}
+/**
+ * Streaming transcription engine with LocalAgreement algorithm
+ *
+ * This enables true streaming transcription by:
+ * 1. Maintaining a rolling audio buffer per session
+ * 2. Running inference on overlapping windows
+ * 3. Only emitting text that is "stable" (agreed upon across inference runs)
+ */
+export declare class StreamingEngine {
+  /** Create a new streaming transcription engine */
+  constructor(modelPath: string)
+  /** Create a new streaming transcription engine with options */
+  static withOptions(modelPath: string, options?: ModelOptions | undefined | null): StreamingEngine
+  /**
+   * Create a new streaming session
+   * Returns the session ID
+   */
+  createSession(options?: StreamingOptions | undefined | null): number
+  /**
+   * Add audio samples to a streaming session and process
+   *
+   * Returns stable segments (final) and preview text (may change)
+   */
+  processAudio(sessionId: number, samples: Array<number>): StreamingResult
+  /** Flush session - return all remaining audio as final */
+  flushSession(sessionId: number): StreamingResult
+  /** Reset a streaming session (clear buffer, keep session) */
+  resetSession(sessionId: number): void
+  /** Close a streaming session */
+  closeSession(sessionId: number): void
+  /** Get the number of active sessions */
+  sessionCount(): number
+  /** Get the expected sampling rate (16000 Hz for Whisper) */
+  samplingRate(): number
 }

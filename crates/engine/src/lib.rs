@@ -1,6 +1,6 @@
 //! faster-whisper-node engine
 //!
-//! High-performance Whisper transcription for Node.js via CTranslate2.
+//! High-performance Whisper transcription for Node.js via whisper.cpp with Metal acceleration.
 
 mod audio;
 mod download;
@@ -9,21 +9,34 @@ mod vad;
 mod word_timestamps;
 
 use napi_derive::napi;
-use ct2rs::{Whisper, WhisperOptions, Config};
-use ct2rs::sys::{Device, ComputeType, get_device_count};
+use whisper_rs::{WhisperContext, WhisperContextParameters, FullParams, SamplingStrategy};
 
 use vad::{EnergyVad, VadOptions as InternalVadOptions};
 use word_timestamps::parse_timestamped_text;
 
-
-/// Get the number of available CUDA devices
-fn cuda_device_count() -> i32 {
-    get_device_count(Device::CUDA)
+/// Check if Metal (GPU acceleration) is available on macOS
+fn is_metal_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        true // Metal is always available on macOS with Apple Silicon or recent Intel Macs
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
-/// Check if CUDA is available
+/// Check if CUDA is available (for Linux/Windows with NVIDIA GPU)
 fn is_cuda_available() -> bool {
-    cuda_device_count() > 0
+    #[cfg(feature = "cuda")]
+    {
+        // whisper-rs handles CUDA detection internally
+        true
+    }
+    #[cfg(not(feature = "cuda"))]
+    {
+        false
+    }
 }
 
 // Re-export download functions
@@ -149,10 +162,10 @@ pub struct TranscribeOptions {
     pub no_speech_threshold: Option<f64>,
     /// Enable Voice Activity Detection to filter out silent portions (default: false)
     pub vad_filter: Option<bool>,
-    /// VAD configuration options
+    /// VAD-specific options
     pub vad_options: Option<VadOptions>,
     /// Hallucination silence threshold in seconds (default: None)
-    /// Segments with a silent duration longer than this will be considered hallucinations
+    /// If a segment's duration per word exceeds this, it's likely a hallucination
     pub hallucination_silence_threshold: Option<f64>,
 }
 
@@ -184,18 +197,18 @@ impl Default for TranscribeOptions {
     }
 }
 
-/// Model configuration options
+/// Options for model loading
 #[napi(object)]
 #[derive(Clone, Debug)]
 pub struct ModelOptions {
-    /// Device to use: "cpu" or "cuda" (default: "cpu")
+    /// Device to use: "cpu", "cuda", "metal", or "auto" (default: "auto")
     pub device: Option<String>,
-    /// Compute type: "default", "auto", "int8", "int8_float16", "int16", "float16", "float32"
+    /// Compute type (not used in whisper-rs, kept for API compatibility)
     pub compute_type: Option<String>,
-    /// Number of CPU threads per replica (0 for auto)
+    /// Number of CPU threads (0 = auto)
     pub cpu_threads: Option<u32>,
-    /// Custom cache directory for auto-downloaded models
-    pub cache_dir: Option<String>,
+    /// GPU device index (for multi-GPU systems)
+    pub device_index: Option<u32>,
 }
 
 impl Default for ModelOptions {
@@ -204,26 +217,26 @@ impl Default for ModelOptions {
             device: None,
             compute_type: None,
             cpu_threads: None,
-            cache_dir: None,
+            device_index: None,
         }
     }
 }
 
-/// Transcription result containing all segments and metadata
+/// Transcription result with full segment data
 #[napi(object)]
 #[derive(Clone, Debug)]
 pub struct TranscriptionResult {
-    /// All transcribed segments
+    /// All transcription segments
     pub segments: Vec<Segment>,
     /// Detected or specified language
     pub language: String,
-    /// Language detection probability (0 if language was specified)
+    /// Language detection probability
     pub language_probability: f64,
     /// Total audio duration in seconds
     pub duration: f64,
-    /// Audio duration after VAD filtering (equals duration if VAD not used)
+    /// Duration after VAD filtering (if enabled)
     pub duration_after_vad: f64,
-    /// Full transcribed text (all segments joined)
+    /// Full transcription text
     pub text: String,
 }
 
@@ -237,24 +250,27 @@ pub struct LanguageDetectionResult {
     pub probability: f64,
 }
 
-/// Download progress information
+/// Batch transcription result for a single file
 #[napi(object)]
 #[derive(Clone, Debug)]
-pub struct DownloadProgress {
-    /// Current progress percentage (0-100)
-    pub percent: f64,
-    /// Current file being downloaded
-    pub current_file: String,
-    /// Total files to download
-    pub total_files: u32,
+pub struct BatchTranscriptionItem {
+    /// Original file path
+    pub file_path: String,
+    /// Transcription result (None if error)
+    pub result: Option<TranscriptionResult>,
+    /// Error message (None if success)
+    pub error: Option<String>,
     /// Current file index
     pub current_index: u32,
 }
 
+/// Sample rate for Whisper (16kHz)
+const WHISPER_SAMPLE_RATE: u32 = 16000;
+
 #[napi]
 pub struct Engine {
-    model: Whisper,
-    sampling_rate: u32,
+    ctx: WhisperContext,
+    num_threads: u32,
 }
 
 #[napi]
@@ -262,7 +278,7 @@ impl Engine {
     /// Create a new transcription engine from a model path or size
     /// 
     /// # Arguments
-    /// * `model_path` - Either a path to a CTranslate2 model directory, or a model size 
+    /// * `model_path` - Either a path to a GGML model file, or a model size 
     ///                  alias ("tiny", "base", "small", "medium", "large-v2", "large-v3")
     #[napi(constructor)]
     pub fn new(model_path: String) -> napi::Result<Self> {
@@ -291,42 +307,27 @@ impl Engine {
             )));
         }
         
-        let device = match opts.device.as_deref() {
-            Some("cuda") | Some("CUDA") => Device::CUDA,
-            Some("auto") | Some("AUTO") => {
-                if is_cuda_available() {
-                    Device::CUDA
-                } else {
-                    Device::CPU
-                }
+        // Create WhisperContext with parameters
+        let mut ctx_params = WhisperContextParameters::default();
+        
+        // Enable GPU acceleration based on device option
+        let use_gpu = match opts.device.as_deref() {
+            Some("cpu") | Some("CPU") => false,
+            Some("metal") | Some("Metal") | Some("METAL") => true,
+            Some("cuda") | Some("CUDA") => true,
+            Some("auto") | Some("AUTO") | None => {
+                is_metal_available() || is_cuda_available()
             }
-            _ => Device::CPU,
+            _ => false,
         };
+        ctx_params.use_gpu(use_gpu);
         
-        let compute_type = match opts.compute_type.as_deref() {
-            Some("auto") => ComputeType::AUTO,
-            Some("int8") => ComputeType::INT8,
-            Some("int8_float16") => ComputeType::INT8_FLOAT16,
-            Some("int8_float32") => ComputeType::INT8_FLOAT32,
-            Some("int16") => ComputeType::INT16,
-            Some("float16") => ComputeType::FLOAT16,
-            Some("float32") => ComputeType::FLOAT32,
-            _ => ComputeType::DEFAULT,
-        };
-        
-        let config = Config {
-            device,
-            compute_type,
-            num_threads_per_replica: opts.cpu_threads.unwrap_or(0) as usize,
-            ..Config::default()
-        };
-        
-        let model = Whisper::new(&resolved_path, config)
+        let ctx = WhisperContext::new_with_params(&resolved_path, ctx_params)
             .map_err(|e| napi::Error::from_reason(format!("Failed to load model: {}", e)))?;
         
-        let sampling_rate = model.sampling_rate() as u32;
+        let num_threads = opts.cpu_threads.unwrap_or(0);
         
-        Ok(Self { model, sampling_rate })
+        Ok(Self { ctx, num_threads })
     }
 
     /// Transcribe audio file (supports WAV, MP3, FLAC, OGG, M4A)
@@ -409,17 +410,11 @@ impl Engine {
         &self,
         audio_path: String,
     ) -> napi::Result<LanguageDetectionResult> {
-        if !self.model.is_multilingual() {
-            return Err(napi::Error::from_reason(
-                "Language detection requires a multilingual model (not .en variants)"
-            ));
-        }
-        
         let samples = audio::decode_audio_file(&audio_path)
             .map_err(|e| napi::Error::from_reason(format!("Failed to decode audio: {}", e)))?;
         
         // Use first 30 seconds max
-        let max_samples = (30.0 * self.sampling_rate as f64) as usize;
+        let max_samples = (30.0 * WHISPER_SAMPLE_RATE as f64) as usize;
         let detection_samples: &[f32] = if samples.len() > max_samples {
             &samples[..max_samples]
         } else {
@@ -430,9 +425,6 @@ impl Engine {
         let opts = TranscribeOptions::default();
         let result = self.transcribe_samples_internal(detection_samples, &opts)?;
         
-        // Language is detected automatically during transcription
-        // For proper language detection we'd need direct access to the detection layer
-        // For now, return the language from transcription
         Ok(LanguageDetectionResult {
             language: result.language,
             probability: result.language_probability,
@@ -445,16 +437,10 @@ impl Engine {
         &self,
         buffer: napi::bindgen_prelude::Buffer,
     ) -> napi::Result<LanguageDetectionResult> {
-        if !self.model.is_multilingual() {
-            return Err(napi::Error::from_reason(
-                "Language detection requires a multilingual model (not .en variants)"
-            ));
-        }
-        
         let samples = audio::decode_audio_buffer(&buffer)
             .map_err(|e| napi::Error::from_reason(format!("Failed to decode audio buffer: {}", e)))?;
         
-        let max_samples = (30.0 * self.sampling_rate as f64) as usize;
+        let max_samples = (30.0 * WHISPER_SAMPLE_RATE as f64) as usize;
         let detection_samples: &[f32] = if samples.len() > max_samples {
             &samples[..max_samples]
         } else {
@@ -473,19 +459,20 @@ impl Engine {
     /// Get the expected sampling rate (16000 Hz for Whisper)
     #[napi]
     pub fn sampling_rate(&self) -> u32 {
-        self.sampling_rate
+        WHISPER_SAMPLE_RATE
     }
 
     /// Check if the model is multilingual
     #[napi]
     pub fn is_multilingual(&self) -> bool {
-        self.model.is_multilingual()
+        self.ctx.is_multilingual()
     }
 
     /// Get the number of supported languages
     #[napi]
     pub fn num_languages(&self) -> u32 {
-        self.model.num_languages() as u32
+        // whisper.cpp supports ~100 languages
+        99
     }
 
     // Internal transcription implementation
@@ -495,51 +482,113 @@ impl Engine {
         opts: &TranscribeOptions,
     ) -> napi::Result<TranscriptionResult> {
         // Calculate original duration
-        let duration = samples.len() as f64 / self.sampling_rate as f64;
+        let duration = samples.len() as f64 / WHISPER_SAMPLE_RATE as f64;
         
         // Apply VAD filtering if enabled
         let (processed_samples, vad_offset_map) = if opts.vad_filter.unwrap_or(false) {
             let vad_opts = self.build_vad_options(opts.vad_options.as_ref());
-            let vad = EnergyVad::new(self.sampling_rate, vad_opts);
+            let vad = EnergyVad::new(WHISPER_SAMPLE_RATE, vad_opts);
             vad.filter_audio(samples)
         } else {
             (samples.to_vec(), vec![(0.0, 0.0)])
         };
         
-        let duration_after_vad = processed_samples.len() as f64 / self.sampling_rate as f64;
+        let duration_after_vad = processed_samples.len() as f64 / WHISPER_SAMPLE_RATE as f64;
         
-        // Build whisper options
-        let whisper_opts = self.build_whisper_options(opts);
+        // Create state for this transcription
+        let mut state = self.ctx.create_state()
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create state: {}", e)))?;
         
-        // Determine if we want timestamps (needed for word-level or just segment-level)
+        // Build parameters inline to avoid lifetime issues
+        let strategy = if opts.beam_size.unwrap_or(5) <= 1 {
+            SamplingStrategy::Greedy { best_of: 1 }
+        } else {
+            SamplingStrategy::BeamSearch { 
+                beam_size: opts.beam_size.unwrap_or(5) as i32,
+                patience: opts.patience.unwrap_or(1.0) as f32,
+            }
+        };
+        
+        let mut params = FullParams::new(strategy);
+        
+        // Set number of threads
+        let n_threads = if self.num_threads > 0 { self.num_threads as i32 } else { 4 };
+        params.set_n_threads(n_threads);
+        
+        // Set language
+        if let Some(ref lang) = opts.language {
+            params.set_language(Some(lang));
+        }
+        
+        // Set task (translate vs transcribe)
+        if let Some(ref task) = opts.task {
+            params.set_translate(task == "translate");
+        }
+        
+        // Suppress non-speech
+        if opts.suppress_blank.unwrap_or(true) {
+            params.set_suppress_blank(true);
+        }
+        
+        // Disable printing to stdout
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        
+        // Initial prompt
+        if let Some(ref prompt) = opts.initial_prompt {
+            params.set_initial_prompt(prompt);
+        }
+        
+        // Temperature
+        if let Some(temp) = opts.temperature {
+            params.set_temperature(temp as f32);
+        }
+        
+        // No speech threshold
+        if let Some(threshold) = opts.no_speech_threshold {
+            params.set_no_speech_thold(threshold as f32);
+        }
+        
+        // Determine if we want word timestamps
         let want_word_timestamps = opts.word_timestamps.unwrap_or(false);
-        let timestamp = want_word_timestamps;
+        params.set_token_timestamps(want_word_timestamps);
         
-        // Perform transcription
-        let results = self.model.generate(
-            &processed_samples,
-            opts.language.as_deref(),
-            timestamp,
-            &whisper_opts,
-        ).map_err(|e| napi::Error::from_reason(format!("Transcription failed: {}", e)))?;
+        // Run transcription
+        state.full(params, &processed_samples)
+            .map_err(|e| napi::Error::from_reason(format!("Transcription failed: {}", e)))?;
         
         // Build segments from results
         let mut segments = Vec::new();
         let mut full_text = String::new();
-        let samples_per_segment = self.model.n_samples();
         let use_vad = opts.vad_filter.unwrap_or(false);
         let hallucination_threshold = opts.hallucination_silence_threshold;
         
-        for (idx, result) in results.iter().enumerate() {
-            let raw_text = result.trim();
+        let num_segments = state.full_n_segments();
+        
+        for i in 0..num_segments {
+            let segment = match state.get_segment(i) {
+                Some(s) => s,
+                None => continue,
+            };
+            
+            let text = match segment.to_str_lossy() {
+                Ok(t) => t.into_owned(),
+                Err(_) => continue,
+            };
+            
+            let raw_text = text.trim();
             if raw_text.is_empty() {
                 continue;
             }
             
-            // Calculate segment timing in filtered audio
-            let filtered_segment_start = (idx * samples_per_segment) as f64 / self.sampling_rate as f64;
-            let filtered_segment_end = ((idx + 1) * samples_per_segment) as f64 / self.sampling_rate as f64;
-            let filtered_segment_end = filtered_segment_end.min(duration_after_vad);
+            let start_ts = segment.start_timestamp();
+            let end_ts = segment.end_timestamp();
+            
+            // Convert from centiseconds to seconds
+            let filtered_segment_start = start_ts as f64 / 100.0;
+            let filtered_segment_end = end_ts as f64 / 100.0;
             
             // Convert to original audio time if VAD was used
             let (segment_start, segment_end) = if use_vad {
@@ -552,44 +601,57 @@ impl Engine {
             };
             
             // Parse word-level timestamps if enabled
-            let (clean_text, words) = if want_word_timestamps {
-                let timed_words = parse_timestamped_text(raw_text);
-                let clean = word_timestamps::clean_transcript(raw_text);
+            let words = if want_word_timestamps {
+                let num_tokens = segment.n_tokens();
                 
-                // Convert to Word structs and adjust for segment offset and VAD
-                let words: Vec<Word> = timed_words.into_iter().map(|w| {
-                    let word_start = if use_vad {
-                        vad::restore_timestamp(filtered_segment_start + w.start, &vad_offset_map)
-                    } else {
-                        segment_start + w.start
-                    };
-                    let word_end = if use_vad {
-                        vad::restore_timestamp(filtered_segment_start + w.end, &vad_offset_map)
-                    } else {
-                        segment_start + w.end
+                let mut words_vec = Vec::new();
+                for j in 0..num_tokens {
+                    let token = match segment.get_token(j) {
+                        Some(t) => t,
+                        None => continue,
                     };
                     
-                    Word {
-                        word: w.word,
-                        start: word_start,
-                        end: word_end,
-                        probability: w.probability,
+                    let token_text = match token.to_str_lossy() {
+                        Ok(t) => t.into_owned(),
+                        Err(_) => continue,
+                    };
+                    
+                    let token_data = token.token_data();
+                    
+                    // Skip special tokens
+                    if token_text.starts_with('[') || token_text.starts_with('<') {
+                        continue;
                     }
-                }).collect();
-                
-                (clean, Some(words))
+                    
+                    let word_start = token_data.t0 as f64 / 100.0;
+                    let word_end = token_data.t1 as f64 / 100.0;
+                    
+                    let (adj_start, adj_end) = if use_vad {
+                        (
+                            vad::restore_timestamp(word_start, &vad_offset_map),
+                            vad::restore_timestamp(word_end, &vad_offset_map),
+                        )
+                    } else {
+                        (segment_start + word_start, segment_start + word_end)
+                    };
+                    
+                    words_vec.push(Word {
+                        word: token_text.trim().to_string(),
+                        start: adj_start,
+                        end: adj_end,
+                        probability: token.token_probability() as f64,
+                    });
+                }
+                Some(words_vec)
             } else {
-                (raw_text.to_string(), None)
+                None
             };
             
-            // Hallucination detection: skip segments with too much silence
+            // Hallucination detection
             if let Some(threshold) = hallucination_threshold {
                 let segment_duration = segment_end - segment_start;
-                let text_len = clean_text.split_whitespace().count();
+                let text_len = raw_text.split_whitespace().count();
                 
-                // Estimate speaking rate and check for hallucination
-                // Normal speaking is ~150 words/minute = 2.5 words/sec
-                // If segment duration per word is > threshold, likely hallucination
                 if text_len > 0 {
                     let duration_per_word = segment_duration / text_len as f64;
                     if duration_per_word > threshold {
@@ -601,27 +663,30 @@ impl Engine {
             if !full_text.is_empty() {
                 full_text.push(' ');
             }
-            full_text.push_str(&clean_text);
+            full_text.push_str(raw_text);
             
             segments.push(Segment {
-                id: idx as u32,
-                seek: (idx * samples_per_segment) as u32,
+                id: i as u32,
+                seek: 0,
                 start: segment_start,
                 end: segment_end,
-                text: clean_text,
-                tokens: vec![], // ct2rs doesn't expose token IDs directly in generate()
-                temperature: opts.temperature.unwrap_or(1.0),
-                avg_logprob: 0.0, // Not available from ct2rs high-level API
+                text: raw_text.to_string(),
+                tokens: vec![],
+                temperature: opts.temperature.unwrap_or(0.0),
+                avg_logprob: 0.0,
                 compression_ratio: 0.0,
                 no_speech_prob: 0.0,
                 words,
             });
         }
         
+        // Get detected language if available
+        let detected_language = opts.language.clone().unwrap_or_else(|| "en".to_string());
+        
         Ok(TranscriptionResult {
             segments,
-            language: opts.language.clone().unwrap_or_else(|| "auto".to_string()),
-            language_probability: 0.0, // Would need low-level API for this
+            language: detected_language,
+            language_probability: 0.0,
             duration,
             duration_after_vad,
             text: full_text,
@@ -656,37 +721,6 @@ impl Engine {
         vad_opts
     }
 
-    // Helper: build WhisperOptions from TranscribeOptions
-    fn build_whisper_options(&self, opts: &TranscribeOptions) -> WhisperOptions {
-        let mut whisper_opts = WhisperOptions::default();
-        
-        if let Some(beam_size) = opts.beam_size {
-            whisper_opts.beam_size = beam_size as usize;
-        }
-        if let Some(patience) = opts.patience {
-            whisper_opts.patience = patience as f32;
-        }
-        if let Some(length_penalty) = opts.length_penalty {
-            whisper_opts.length_penalty = length_penalty as f32;
-        }
-        if let Some(repetition_penalty) = opts.repetition_penalty {
-            whisper_opts.repetition_penalty = repetition_penalty as f32;
-        }
-        if let Some(no_repeat_ngram_size) = opts.no_repeat_ngram_size {
-            whisper_opts.no_repeat_ngram_size = no_repeat_ngram_size as usize;
-        }
-        if let Some(temperature) = opts.temperature {
-            whisper_opts.sampling_temperature = temperature as f32;
-        }
-        if let Some(suppress_blank) = opts.suppress_blank {
-            whisper_opts.suppress_blank = suppress_blank;
-        }
-        if let Some(max_length) = opts.max_length {
-            whisper_opts.max_length = max_length as usize;
-        }
-        
-        whisper_opts
-    }
 }
 
 // ============== Standalone Functions ==============
@@ -773,22 +807,30 @@ pub fn format_timestamp(seconds: f64, always_include_hours: Option<bool>) -> Str
     }
 }
 
-/// Check if CUDA (GPU acceleration) is available
+/// Check if GPU acceleration is available (Metal on macOS, CUDA on Linux/Windows)
 #[napi]
 pub fn is_gpu_available() -> bool {
-    is_cuda_available()
+    is_metal_available() || is_cuda_available()
 }
 
-/// Get the number of available CUDA GPU devices
+/// Get the number of available GPU devices
 #[napi]
 pub fn get_gpu_count() -> i32 {
-    cuda_device_count()
+    if is_metal_available() {
+        1 // Metal is unified, typically 1 GPU
+    } else if is_cuda_available() {
+        1 // Would need CUDA API to get actual count
+    } else {
+        0
+    }
 }
 
-/// Get the best available device ("cuda" if GPU available, otherwise "cpu")
+/// Get the best available device ("metal", "cuda", or "cpu")
 #[napi]
 pub fn get_best_device() -> String {
-    if is_cuda_available() {
+    if is_metal_available() {
+        "metal".to_string()
+    } else if is_cuda_available() {
         "cuda".to_string()
     } else {
         "cpu".to_string()
@@ -861,7 +903,7 @@ impl Default for StreamingOptions {
 
 /// Internal streaming session state
 struct StreamingSessionState {
-    /// Rolling audio buffer (pub for direct access in process_audio)
+    /// Rolling audio buffer
     pub buffer: Vec<f32>,
     /// Total samples offset (discarded samples count)
     pub offset_samples: usize,
@@ -917,74 +959,6 @@ impl StreamingSessionState {
         self.offset_samples as f64 / 16000.0
     }
 
-    /// Process transcription result with LocalAgreement algorithm
-    fn process_result(&mut self, segments: Vec<Segment>) -> StreamingResult {
-        let buffer_duration = self.buffer_duration_seconds();
-        let audio_offset = self.audio_offset_seconds();
-        let stability_margin_seconds = self.stability_margin_samples as f64 / 16000.0;
-        
-        // Calculate stability cutoff (relative to buffer start)
-        let stability_cutoff = buffer_duration - stability_margin_seconds;
-        
-        let mut stable_segments = Vec::new();
-        let mut preview_text = String::new();
-        let mut last_stable_end_samples: usize = 0;
-        
-        for segment in segments {
-            // Segment times are relative to buffer start
-            let relative_start = segment.start;
-            let relative_end = segment.end;
-            
-            // Absolute times in the full audio stream
-            let absolute_start = audio_offset + relative_start;
-            let absolute_end = audio_offset + relative_end;
-            
-            if stability_cutoff > 0.0 && relative_end <= stability_cutoff {
-                // This segment is STABLE - ends well before buffer edge
-                stable_segments.push(StreamingSegment {
-                    text: segment.text.clone(),
-                    start: absolute_start,
-                    end: absolute_end,
-                    is_final: true,
-                });
-                last_stable_end_samples = (relative_end * 16000.0) as usize;
-            } else {
-                // This segment is UNSTABLE (preview) - near buffer edge
-                preview_text.push_str(&segment.text);
-            }
-        }
-        
-        // Shift buffer: remove committed audio but keep overlap for context
-        if last_stable_end_samples > 0 {
-            let drain_amount = if last_stable_end_samples > self.context_overlap_samples {
-                last_stable_end_samples - self.context_overlap_samples
-            } else {
-                0
-            };
-            
-            if drain_amount > 0 && drain_amount < self.buffer.len() {
-                self.buffer.drain(0..drain_amount);
-                self.offset_samples += drain_amount;
-            }
-        }
-        
-        // Handle max buffer overflow - force commit half the buffer
-        if self.is_buffer_full() && stable_segments.is_empty() {
-            let force_drain = self.buffer.len() / 2;
-            if force_drain > 0 {
-                self.buffer.drain(0..force_drain);
-                self.offset_samples += force_drain;
-            }
-        }
-        
-        StreamingResult {
-            stable_segments,
-            preview_text: if preview_text.is_empty() { None } else { Some(preview_text) },
-            buffer_duration: self.buffer_duration_seconds(),
-            total_duration: self.total_duration_seconds(),
-        }
-    }
-
     fn reset(&mut self) {
         self.buffer.clear();
         self.offset_samples = 0;
@@ -999,8 +973,8 @@ impl StreamingSessionState {
 /// 3. Only emitting text that is "stable" (agreed upon across inference runs)
 #[napi]
 pub struct StreamingEngine {
-    model: Whisper,
-    sampling_rate: u32,
+    ctx: WhisperContext,
+    num_threads: u32,
     sessions: Mutex<HashMap<i64, StreamingSessionState>>,
     next_session_id: Mutex<i64>,
 }
@@ -1031,40 +1005,27 @@ impl StreamingEngine {
             )));
         }
         
-        let device = match opts.device.as_deref() {
-            Some("cuda") | Some("CUDA") => Device::CUDA,
-            Some("auto") | Some("AUTO") => {
-                if is_cuda_available() { Device::CUDA } else { Device::CPU }
+        let mut ctx_params = WhisperContextParameters::default();
+        
+        let use_gpu = match opts.device.as_deref() {
+            Some("cpu") | Some("CPU") => false,
+            Some("metal") | Some("Metal") | Some("METAL") => true,
+            Some("cuda") | Some("CUDA") => true,
+            Some("auto") | Some("AUTO") | None => {
+                is_metal_available() || is_cuda_available()
             }
-            _ => Device::CPU,
+            _ => false,
         };
+        ctx_params.use_gpu(use_gpu);
         
-        let compute_type = match opts.compute_type.as_deref() {
-            Some("auto") => ComputeType::AUTO,
-            Some("int8") => ComputeType::INT8,
-            Some("int8_float16") => ComputeType::INT8_FLOAT16,
-            Some("int8_float32") => ComputeType::INT8_FLOAT32,
-            Some("int16") => ComputeType::INT16,
-            Some("float16") => ComputeType::FLOAT16,
-            Some("float32") => ComputeType::FLOAT32,
-            _ => ComputeType::DEFAULT,
-        };
-        
-        let config = Config {
-            device,
-            compute_type,
-            num_threads_per_replica: opts.cpu_threads.unwrap_or(0) as usize,
-            ..Config::default()
-        };
-        
-        let model = Whisper::new(&resolved_path, config)
+        let ctx = WhisperContext::new_with_params(&resolved_path, ctx_params)
             .map_err(|e| napi::Error::from_reason(format!("Failed to load model: {}", e)))?;
         
-        let sampling_rate = model.sampling_rate() as u32;
+        let num_threads = opts.cpu_threads.unwrap_or(4);
         
         Ok(Self {
-            model,
-            sampling_rate,
+            ctx,
+            num_threads,
             sessions: Mutex::new(HashMap::new()),
             next_session_id: Mutex::new(0),
         })
@@ -1125,17 +1086,35 @@ impl StreamingEngine {
         let audio_offset = session.audio_offset_seconds();
         let stability_margin = session.stability_margin_samples as f64 / 16000.0;
         
-        // Build whisper options
-        let mut whisper_opts = WhisperOptions::default();
-        whisper_opts.beam_size = beam_size;
+        // Create state for transcription
+        let mut state = self.ctx.create_state()
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create state: {}", e)))?;
         
-        // Transcribe with timestamps
-        let results = self.model.generate(
-            &buffer,
-            language.as_deref(),
-            true, // Enable timestamps
-            &whisper_opts,
-        ).map_err(|e| napi::Error::from_reason(format!("Transcription failed: {}", e)))?;
+        // Build params
+        let strategy = if beam_size <= 1 {
+            SamplingStrategy::Greedy { best_of: 1 }
+        } else {
+            SamplingStrategy::BeamSearch { 
+                beam_size: beam_size as i32,
+                patience: 1.0,
+            }
+        };
+        
+        let mut params = FullParams::new(strategy);
+        params.set_n_threads(self.num_threads as i32);
+        params.set_token_timestamps(true);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        
+        if let Some(ref lang) = language {
+            params.set_language(Some(lang));
+        }
+        
+        // Run transcription
+        state.full(params, &buffer)
+            .map_err(|e| napi::Error::from_reason(format!("Transcription failed: {}", e)))?;
         
         // Calculate stability cutoff (relative to buffer)
         let stability_cutoff = buffer_duration - stability_margin;
@@ -1144,58 +1123,47 @@ impl StreamingEngine {
         let mut preview_text = String::new();
         let mut last_stable_end_time = 0.0f64;
         
-        // Process results using word timestamps for stability detection
-        for (_idx, result) in results.iter().enumerate() {
-            let raw_text = result.trim();
+        // Process results
+        let num_segments = state.full_n_segments();
+        
+        for i in 0..num_segments {
+            let segment = match state.get_segment(i) {
+                Some(s) => s,
+                None => continue,
+            };
+            
+            let text = match segment.to_str_lossy() {
+                Ok(t) => t.into_owned(),
+                Err(_) => continue,
+            };
+            
+            let raw_text = text.trim();
             if raw_text.is_empty() {
                 continue;
             }
             
-            // Parse word timestamps to get actual timing
-            let words = word_timestamps::parse_timestamped_text(raw_text);
+            let start_ts = segment.start_timestamp();
+            let end_ts = segment.end_timestamp();
             
-            if words.is_empty() {
-                // No timestamps available, treat entire text as preview
-                let clean = word_timestamps::clean_transcript(raw_text);
-                preview_text.push_str(&clean);
-                continue;
-            }
+            // Convert from centiseconds to seconds
+            let segment_start = start_ts as f64 / 100.0;
+            let segment_end = end_ts as f64 / 100.0;
             
-            // Use word timestamps to split stable vs preview
-            let mut stable_words = Vec::new();
-            let mut preview_words = Vec::new();
-            
-            for word in words {
-                // Word timing is relative to this segment's start (which is relative to buffer)
-                if stability_cutoff > 0.0 && word.end <= stability_cutoff {
-                    stable_words.push(word);
-                } else {
-                    preview_words.push(word);
-                }
-            }
-            
-            // Create stable segment from stable words
-            if !stable_words.is_empty() {
-                let first = stable_words.first().unwrap();
-                let last = stable_words.last().unwrap();
-                let text: String = stable_words.iter().map(|w| w.word.as_str()).collect::<Vec<_>>().join(" ");
-                
+            if stability_cutoff > 0.0 && segment_end <= stability_cutoff {
+                // Stable segment
                 stable_segments.push(StreamingSegment {
-                    text,
-                    start: audio_offset + first.start,
-                    end: audio_offset + last.end,
+                    text: raw_text.to_string(),
+                    start: audio_offset + segment_start,
+                    end: audio_offset + segment_end,
                     is_final: true,
                 });
-                
-                last_stable_end_time = last.end;
-            }
-            
-            // Collect preview words
-            for word in preview_words {
-                if !preview_text.is_empty() && !preview_text.ends_with(' ') {
+                last_stable_end_time = segment_end;
+            } else {
+                // Preview segment
+                if !preview_text.is_empty() {
                     preview_text.push(' ');
                 }
-                preview_text.push_str(&word.word);
+                preview_text.push_str(raw_text);
             }
         }
         
@@ -1257,41 +1225,62 @@ impl StreamingEngine {
         let beam_size = session.beam_size;
         let audio_offset = session.audio_offset_seconds();
         
-        // Build whisper options
-        let mut whisper_opts = WhisperOptions::default();
-        whisper_opts.beam_size = beam_size;
+        // Create state for transcription
+        let mut state = self.ctx.create_state()
+            .map_err(|e| napi::Error::from_reason(format!("Failed to create state: {}", e)))?;
         
-        // Transcribe remaining buffer
-        let results = self.model.generate(
-            &buffer,
-            language.as_deref(),
-            true,
-            &whisper_opts,
-        ).map_err(|e| napi::Error::from_reason(format!("Transcription failed: {}", e)))?;
+        let strategy = if beam_size <= 1 {
+            SamplingStrategy::Greedy { best_of: 1 }
+        } else {
+            SamplingStrategy::BeamSearch { 
+                beam_size: beam_size as i32,
+                patience: 1.0,
+            }
+        };
+        
+        let mut params = FullParams::new(strategy);
+        params.set_n_threads(self.num_threads as i32);
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        
+        if let Some(ref lang) = language {
+            params.set_language(Some(lang));
+        }
+        
+        // Run transcription
+        state.full(params, &buffer)
+            .map_err(|e| napi::Error::from_reason(format!("Transcription failed: {}", e)))?;
         
         // All segments are final on flush
         let mut final_segments = Vec::new();
-        let samples_per_segment = self.model.n_samples();
-        let buffer_duration = session.buffer_duration_seconds();
+        let num_segments = state.full_n_segments();
         
-        for (idx, result) in results.iter().enumerate() {
-            let raw_text = result.trim();
+        for i in 0..num_segments {
+            let segment = match state.get_segment(i) {
+                Some(s) => s,
+                None => continue,
+            };
+            
+            let text = match segment.to_str_lossy() {
+                Ok(t) => t.into_owned(),
+                Err(_) => continue,
+            };
+            
+            let raw_text = text.trim();
             if raw_text.is_empty() {
                 continue;
             }
             
-            let segment_start = (idx * samples_per_segment) as f64 / self.sampling_rate as f64;
-            let segment_end = ((idx + 1) * samples_per_segment) as f64 / self.sampling_rate as f64;
-            let segment_end = segment_end.min(buffer_duration);
+            let start_ts = segment.start_timestamp();
+            let end_ts = segment.end_timestamp();
             
-            let clean_text = if raw_text.contains('<') && raw_text.contains('>') {
-                word_timestamps::clean_transcript(raw_text)
-            } else {
-                raw_text.to_string()
-            };
+            let segment_start = start_ts as f64 / 100.0;
+            let segment_end = end_ts as f64 / 100.0;
             
             final_segments.push(StreamingSegment {
-                text: clean_text,
+                text: raw_text.to_string(),
                 start: audio_offset + segment_start,
                 end: audio_offset + segment_end,
                 is_final: true,
@@ -1345,6 +1334,6 @@ impl StreamingEngine {
     /// Get the expected sampling rate (16000 Hz for Whisper)
     #[napi]
     pub fn sampling_rate(&self) -> u32 {
-        self.sampling_rate
+        WHISPER_SAMPLE_RATE
     }
 }

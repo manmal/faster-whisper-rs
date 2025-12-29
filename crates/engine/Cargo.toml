@@ -9,9 +9,10 @@ crate-type = ["cdylib"]
 [dependencies]
 napi = { version = "2.12", features = ["async", "tokio_rt"] }
 napi-derive = "2.12"
-# We use ct2rs to generate safe bindings to the C++ lib
-# Enable "accelerate" on macOS for Apple Silicon optimization via Accelerate.framework
-ct2rs = { version = "0.9.14", features = ["whisper", "accelerate"] } 
+
+# Whisper.cpp bindings with Metal support for macOS
+whisper-rs = { version = "0.15", features = ["metal", "coreml"] }
+
 anyhow = "1.0"
 
 # Audio decoding (multi-format support)
@@ -36,3 +37,8 @@ regex = "1.10"
 
 [build-dependencies]
 napi-build = "2"
+
+[features]
+default = []
+# For Linux/CUDA systems
+cuda = ["whisper-rs/cuda"]
