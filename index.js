@@ -21,6 +21,60 @@ if (platform === 'darwin' && arch === 'arm64') {
 }
 
 // Load the native module from crates/engine
-const { Engine } = require(`./crates/engine/${binaryName}`);
+const nativeModule = require(`./crates/engine/${binaryName}`);
 
-module.exports = { Engine };
+// Export Engine and StreamingEngine classes
+const { Engine, StreamingEngine } = nativeModule;
+
+// Export utility functions
+const { 
+  availableModels, 
+  formatTimestamp,
+  // Phase 2 additions
+  isModelAvailable,
+  getModelPath,
+  getCacheDir,
+  downloadModel,
+  decodeAudio,
+  decodeAudioBuffer,
+  // Phase 4 additions
+  isGpuAvailable,
+  getGpuCount,
+  getBestDevice,
+  // Silero VAD
+  isSileroVadAvailable,
+  getSileroModelPath,
+  downloadSileroModel,
+} = nativeModule;
+
+module.exports = { 
+  Engine,
+  // Streaming transcription (LocalAgreement algorithm)
+  StreamingEngine,
+  // Utility functions
+  availableModels,
+  formatTimestamp,
+  // Model management
+  isModelAvailable,
+  getModelPath,
+  getCacheDir,
+  downloadModel,
+  // Audio decoding
+  decodeAudio,
+  decodeAudioBuffer,
+  // GPU detection
+  isGpuAvailable,
+  getGpuCount,
+  getBestDevice,
+  // Silero VAD
+  isSileroVadAvailable,
+  getSileroModelPath,
+  downloadSileroModel,
+};
+
+// Add streaming utilities after export (avoid circular dependency)
+// These are standalone modules that import from this file
+module.exports.StreamingBatcher = require('./streaming-batcher.js').StreamingBatcher;
+module.exports.createBatcher = require('./streaming-batcher.js').createBatcher;
+module.exports.WorkerPoolBatcher = require('./worker-pool-batcher.js').WorkerPoolBatcher;
+module.exports.createWorkerPool = require('./worker-pool-batcher.js').createWorkerPool;
